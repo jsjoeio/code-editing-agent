@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export class Agent {
     private client: Anthropic;
-    constructor(client: Anthropic, getUserMessage: () => Promise<void>) {
+    constructor(client: Anthropic) {
         this.client = client;
     }
 
@@ -10,7 +10,7 @@ export class Agent {
         const prompt = "\u001b[94mYou\u001b[0m: ";
         process.stdout.write(prompt);
         for await (const line of process.stdin) {
-            const userInput = line.trim();
+            const userInput = line.toString().trim();
             if (userInput) {
                 return userInput;
             }
@@ -33,7 +33,7 @@ export class Agent {
     public async run(): Promise<void> {
         const conversation: { role: "user" | "assistant"; content: string }[] = [];
 
-        console.log("Chat with Claude (use 'ctrl-c' to quit)")
+        console.log("Chat with Claude (type 'exit' or 'quit' to end session)!")
 
         while (true) {
             const userMessage = await this.getUserMessage();
@@ -42,17 +42,20 @@ export class Agent {
                 break;
             }
 
-            conversation.push({ role: "user", content: userMessage });
+            conversation.push({ role: "user" as const, content: userMessage });
 
             try {
                 // Get response from Claude
                 const message = await this.runInference(conversation);
-                message.content
-                const assistantMessage = { role: "assistant" as const, content: message.content.join(" ") };
-                conversation.push(assistantMessage);
+
+                const assistantContent = message.content.filter(item => item.type === "text").map(item => item.text).join(" ");
+                conversation.push({
+                    role: "assistant" as const,
+                    content: assistantContent,
+                });
 
                 // Display Claude's response
-                console.log(`\u001b[93mClaude\u001b[0m: ${message.content}`);
+                console.log(`\u001b[93mClaude\u001b[0m: ${assistantContent}`);
             } catch (error) {
                 console.error("Error during inference:", error);
                 break;
