@@ -2,34 +2,63 @@ import Anthropic from "@anthropic-ai/sdk";
 
 export class Agent {
     private client: Anthropic;
-    constructor(client: Anthropic) {
+    private useStub: boolean;
+    constructor(client: Anthropic, useStub: boolean = false) {
         this.client = client;
+        this.useStub = useStub;
     }
 
     private async getUserMessage(): Promise<string> {
         const prompt = "\u001b[94mYou\u001b[0m: ";
         process.stdout.write(prompt);
-        for await (const line of process.stdin) {
-            const userInput = line.toString().trim();
-            if (userInput) {
-                return userInput;
-            }
-        }
 
-        return ""
+        return new Promise((resolve, reject) => {
+            try {
+                process.stdin.setEncoding("utf-8");
+                process.stdin.resume(); // Ensure stdin is active
+
+                process.stdin.once("data", (data) => {
+                    const userInput = data.toString().trim();
+                    process.stdin.pause(); // Pause stdin after receiving input
+                    resolve(userInput);
+                });
+            } catch (error) {
+                reject(error);
+            }
+        });
     }
 
-    private async runInference(conversation: { role: "user" | "assistant", content: string}[]): Promise<Anthropic.Messages.Message> {
+    private async runInference(conversation: { role: "user" | "assistant", content: string }[]): Promise<Anthropic.Messages.Message> {
         const params: Anthropic.MessageCreateParams = {
             max_tokens: 1024,
             messages: conversation,
             model: 'claude-3-5-sonnet-latest',
-          };
-          const message = await this.client.messages.create(params);
-          return message;
+        };
+
+        if (this.useStub) {
+            const stubResponse = {
+                content: [
+                    {
+
+                        type: "text",
+                        text: "This is a stubbed response from Claude.",
+                    }
+
+                ]
+            } as unknown as Anthropic.Messages.Message;
+
+            return Promise.resolve(stubResponse);
+
+        }
+        try {
+            const message = await this.client.messages.create(params);
+            return message;
+        } catch (error) {
+            console.error("Error during inference:", error);
+            return Promise.reject(error);
+        }
     }
 
-    // todo how to handle errors, either return result or throw error
     public async run(): Promise<void> {
         const conversation: { role: "user" | "assistant"; content: string }[] = [];
 
