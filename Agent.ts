@@ -1,8 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
+import type { ToolDefinition } from "./Tool";
 
 export class Agent {
     private client: Anthropic;
     private useStub: boolean;
+    private tools: ToolDefinition[] = [];
     constructor(client: Anthropic, useStub: boolean = false) {
         this.client = client;
         this.useStub = useStub;
@@ -33,6 +35,11 @@ export class Agent {
             max_tokens: 1024,
             messages: conversation,
             model: 'claude-3-5-sonnet-latest',
+            tools: this.tools.map(tool => ({
+                name: tool.name,
+                description: tool.description,
+                input_schema: tool.inputSchema,
+            })),
         };
 
         if (this.useStub) {
