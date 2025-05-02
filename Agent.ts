@@ -1,10 +1,12 @@
 import Anthropic from "@anthropic-ai/sdk";
-import type { ToolDefinition } from "./Tool";
+import { READ_FILE_DEFINITION, type ToolDefinition } from "./Tool";
+import type { MessageParam } from "@anthropic-ai/sdk/src/resources.js";
+
 
 export class Agent {
     private client: Anthropic;
     private useStub: boolean;
-    private tools: ToolDefinition[] = [];
+    private tools: ToolDefinition[] = [READ_FILE_DEFINITION];
     constructor(client: Anthropic, useStub: boolean = false) {
         this.client = client;
         this.useStub = useStub;
@@ -30,10 +32,10 @@ export class Agent {
         });
     }
 
-    private async runInference(conversation: { role: "user" | "assistant", content: string }[]): Promise<Anthropic.Messages.Message> {
+    private async runInference(conversations: MessageParam[]): Promise<Anthropic.Messages.Message> {
         const params: Anthropic.MessageCreateParams = {
             max_tokens: 1024,
-            messages: conversation,
+            messages: conversations,
             model: 'claude-3-5-sonnet-latest',
             tools: this.tools.map(tool => ({
                 name: tool.name,
@@ -67,7 +69,9 @@ export class Agent {
     }
 
     public async run(): Promise<void> {
-        const conversation: { role: "user" | "assistant"; content: string }[] = [];
+
+
+        const conversation: MessageParam[] = [];
 
         console.log("Chat with Claude (type 'exit' or 'quit' to end session)!")
 
@@ -84,14 +88,63 @@ export class Agent {
                 // Get response from Claude
                 const message = await this.runInference(conversation);
 
-                const assistantContent = message.content.filter(item => item.type === "text").map(item => item.text).join(" ");
-                conversation.push({
-                    role: "assistant" as const,
-                    content: assistantContent,
-                });
+                message.content.forEach(async (item) => {
+                    let content = "";
+                    switch (item.type) {
+                        case 'text':
+                            content = item.text;
+                            console.log(`\u001b[93mClaude\u001b[0m: ${content}`);
+                            conversation.push({
+                                content,
+                                role: "assistant" as const,
+                            });
+                            break;
+                        case 'tool_use':
+                            const result = await this.executeTool(item)
+                            const toolResultContent = [
+                                {
+                                    "type": "tool_result" as const,
+                                    "tool_use_id": result.id,
+                                    "content": result.result,
+                                }
+                            ]
+                            // have ot push tool_use before tool result
+                            conversation.push({
+                                role: 'assistant' as const,
+                                content: [
+                                    {
+                                        type: "tool_use" as const,
+                                        id: item.id,
+                                        name: item.name,
+                                        input: item.input,
+                                    }
+                                ]
+                            })
 
-                // Display Claude's response
-                console.log(`\u001b[93mClaude\u001b[0m: ${assistantContent}`);
+                            conversation.push({
+                                role: 'user' as const,
+                                content: toolResultContent,
+                            });
+                            console.log(`\n\u001b[92mtool\u001b[0m: ${item.name}(${JSON.stringify(item.input)})`);
+
+                            const followUp = await this.runInference(conversation);
+
+                            followUp.content.forEach((item) => {
+                                if (item.type === 'text') {
+                                    const content = item.text;
+                                    console.log(`\u001b[93mClaude\u001b[0m: ${content}`);
+                                    conversation.push({
+                                        role: "assistant" as const,
+                                        content,
+                                    });
+                                }
+                            });
+
+                            break;
+                        default:
+                            break;
+                    }
+                });
             } catch (error) {
                 console.error("Error during inference:", error);
                 break;
@@ -100,4 +153,33 @@ export class Agent {
 
     }
 
+    private async executeTool(item: Anthropic.Messages.ToolUseBlock): Promise<{ type: 'tool_result'; id: string; result: string; error: boolean }> {
+        const toolDef = this.tools.find(tool => tool.name === item.name);
+
+        if (!toolDef) {
+            return {
+                type: 'tool_result',
+                id: item.id,
+                result: 'tool not found',
+                error: true,
+            };
+        }
+
+        try {
+            const response = await toolDef.function(item.input);
+            return {
+                type: 'tool_result',
+                id: item.id,
+                result: response,
+                error: false,
+            };
+        } catch (err) {
+            return {
+                type: 'tool_result',
+                id: item.id,
+                result: (err as Error).message,
+                error: true,
+            };
+        }
+    }
 }
